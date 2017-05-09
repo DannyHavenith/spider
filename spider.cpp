@@ -70,11 +70,19 @@ void log_time( const esp_link::packet *p)
         esp.send( "\n");
     }
 }
+void clear_uart()
+{
+    while (uart.data_available()) uart.get();
+}
 
 int main(void)
 {
     make_output( led);
     set( led);
+
+    // get startup logging of the uart out of the way.
+    _delay_ms( 100); // wait for an eternity.
+    clear_uart();    // then clear everything received on uart.
 
     uart.send("sending sync2\n");
     while (not esp.sync()) toggle( led);
@@ -83,7 +91,7 @@ int main(void)
     for(;;)
     {
         const esp_link::packet *p = 0;
-        esp.request( esp.CMD_GET_TIME, 0);
+        esp.execute( esp_link::get_time);
         p = esp.receive();
         log_time( p);
         _delay_ms( 1000);
