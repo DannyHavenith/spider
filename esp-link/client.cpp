@@ -9,50 +9,66 @@
 #include <stdlib.h>
 #include "command_codes.hpp"
 
+namespace
+{
+    constexpr uint8_t SLIP_END     = 0xC0;    /**< End of packet */
+    constexpr uint8_t SLIP_ESC     = 0xDB;    /**< Escape */
+    constexpr uint8_t SLIP_ESC_END = 0xDC;    /**< Escaped END */
+    constexpr uint8_t SLIP_ESC_ESC = 0xDD;    /**< Escaped escape*/
+}
+
 namespace esp_link
 {
 
 const esp_link::packet* client::receive(uint32_t timeout)
 {
-    static char buffer[10];
-    uint8_t index = 0;
-    //            uint8_t last_received = 0;
-    //            while ((last_received = receive_byte_w()) != SLIP_END)
-    //            {
-    //                send("skipped:");
-    //                send( itoa( last_received, buffer, 10));
-    //                send("\n");
-    //            }
-    uint8_t retries = 3;
-    uint8_t last_received = 0;
-    while (( index < 8) && retries--)
+    while (timeout--)
     {
-        if (!receive_byte( last_received, timeout)) return nullptr;
+        auto p = try_receive();
+        if (p) return p;
+    }
 
-        while (index < buffer_size && last_received != SLIP_END)
+    return nullptr;
+}
+
+const packet* client::try_receive()
+{
+    while (m_uart->data_available())
+    {
+        uint8_t lastByte = m_uart->read();
+        if (lastByte == SLIP_ESC)
         {
-            m_buffer[index++] = last_received;
-            if (!receive_byte( last_received, timeout)) return nullptr;
+            m_last_was_esc = true;
+            continue;
+        }
+
+        if (lastByte == SLIP_END)
+        {
+            auto packet = decode_packet( m_buffer, m_buffer_index);
+            m_buffer_index = 0;
+            m_last_was_esc = false;
+            return packet;
+        }
+
+        if (m_last_was_esc)
+        {
+            m_last_was_esc = false;
+            if (lastByte == SLIP_ESC_ESC)
+            {
+                lastByte = SLIP_ESC;
+            }
+            else if (lastByte == SLIP_ESC_END)
+            {
+                lastByte = SLIP_END;
+            }
+        }
+
+        if (m_buffer_index <= buffer_size)
+        {
+            m_buffer[m_buffer_index++] = lastByte;
         }
     }
-
-    for (uint8_t count = 0; count < index; ++count)
-    {
-        send_hex( m_buffer[count]);
-    }
-    send_hex( last_received);
-    send( "\n");
-
-    if (index == buffer_size || index < 8)
-    {
-        send( "index: ");
-        send( itoa( index, buffer, 10));
-        send( "\n");
-
-        return nullptr;
-    }
-
-    return decode_packet( m_buffer, index);
+    return nullptr;
 }
 
 void client::send(const char* str)
@@ -63,24 +79,95 @@ void client::send(const char* str)
 
 bool client::sync()
 {
-    send_direct( SLIP_END);
     const packet* p = nullptr;
-    execute( esp_link::sync);
-    p = receive();
-    return p != nullptr;
+
+    // never recurse
+    if (!m_syncing)
+    {
+        send( "sync\n");
+        m_syncing = true;
+        clear_input();
+        send_direct( SLIP_END);
+        clear_input();
+        execute( esp_link::sync);
+        while ((p = receive()))
+        {
+            if (p->cmd ==  commands::CMD_RESP_V)
+            {
+                m_syncing = false;
+                return true;
+            }
+        }
+
+        m_syncing = false;
+    }
+    return false;
 }
 
-const esp_link::packet* client::decode_packet(const uint8_t* buffer,
-        uint8_t) const
+const esp_link::packet* client::decode_packet(
+        const uint8_t*  buffer,
+        uint8_t         size)
 {
-    return reinterpret_cast<const packet*>( buffer);
+    auto p = check_packet( buffer, size);
+    if ( p && p->cmd == commands::CMD_SYNC)
+    {
+        sync();
+        return nullptr;
+    }
+    else
+    {
+        return p;
+    }
+}
+
+void client::log_packet(const esp_link::packet *p)
+{
+    char buffer[10];
+    if (!p)
+    {
+        send( "Null\n");
+    }
+    else
+    {
+        send( "command: " );
+        send( itoa( p->cmd, buffer, 10));
+        send( " value: ");
+        send( itoa( p->value, buffer, 10));
+        send( "\n");
+    }
+}
+
+const esp_link::packet* client::check_packet(
+        const uint8_t*  buffer,
+        uint8_t         size)
+{
+
+    if (size < 8) return nullptr;
+
+    uint16_t crc = 0;
+    const uint8_t *data = buffer;
+
+    while (size-- > 2)
+    {
+        crc16_add( *data++, crc);
+    }
+    if (*reinterpret_cast<const uint16_t*>( data) != crc)
+    {
+        send("check failed\n");
+        return nullptr;
+    }
+    else
+    {
+        send("got packet\n");
+        return reinterpret_cast<const packet*>( buffer);
+    }
 }
 
 void client::send_bytes(const uint8_t* buffer, uint8_t size)
 {
     while (size)
     {
-        crc16_add( *buffer);
+        crc16_add( *buffer, m_runningCrc);
         send_byte( *buffer);
         --size;
         ++buffer;
@@ -159,13 +246,13 @@ void client::send_byte(uint8_t value)
     }
 }
 
-void client::crc16_add(uint8_t value)
+void client::crc16_add(uint8_t value, uint16_t &accumulator)
 {
-    m_runningCrc ^= value;
-    m_runningCrc = (m_runningCrc >> 8) | (m_runningCrc << 8);
-    m_runningCrc ^= (m_runningCrc & 0xff00) << 4;
-    m_runningCrc ^= (m_runningCrc >> 8) >> 4;
-    m_runningCrc ^= (m_runningCrc & 0xff00) >> 5;
+    accumulator ^= value;
+    accumulator = (accumulator >> 8) | (accumulator << 8);
+    accumulator ^= (accumulator & 0xff00) << 4;
+    accumulator ^= (accumulator >> 8) >> 4;
+    accumulator ^= (accumulator & 0xff00) >> 5;
 }
 
 void client::send_request_header(uint16_t command, uint32_t value,
@@ -181,12 +268,24 @@ void client::send_request_header(uint16_t command, uint32_t value,
 
 void client::finalize_request()
 {
+    // make a copy of the running crc because
+    // send_binary() will change it.
     auto crc = m_runningCrc;
     send_binary( crc);
     send_direct( SLIP_END);
 }
 
+
+void client::add_parameter_bytes(const uint8_t* data, uint16_t length)
+{
+    send_binary( length);
+    send_bytes( data, length);
+    uint8_t pad = (4 - (length & 3)) & 3;
+    while (pad--)
+    {
+        crc16_add( 0, m_runningCrc);
+        send_direct( 0);
+    }
 }
 
-
-
+}

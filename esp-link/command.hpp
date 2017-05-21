@@ -26,6 +26,7 @@ struct return_type
 // tag types for return values or parameters
 struct ack {};    /// return bool to indicate whether an ack package arrived
 struct string {}; /// accept any string type as argument
+struct string_with_extra_len {};
 struct callback {};
 
 template<>
@@ -34,14 +35,42 @@ struct return_type<ack>
     using type = bool;
 };
 
-using sync_t     = command< commands::CMD_SYNC,     ack      ()>;
-using get_time_t = command< commands::CMD_GET_TIME, uint32_t ()>;
-using mqtt_subscribe_t = command< commands::CMD_MQTT_SUBSCRIBE, void ( string, uint8_t)>;
-using mqtt_setup_t = command< commands::CMD_MQTT_SETUP, void ( callback, callback, callback, callback)>;
 
 namespace {
-    constexpr sync_t     sync = {};
-    constexpr get_time_t get_time = {};
+    constexpr
+        command<
+            commands::CMD_SYNC,
+            ack()>
+        sync;
+
+    constexpr
+        command<
+            commands::CMD_GET_TIME,
+            uint32_t()>
+        get_time;
+}
+
+namespace mqtt
+{
+namespace {
+    constexpr
+        command<
+            commands::CMD_MQTT_SUBSCRIBE,
+            void ( string, uint8_t)>
+        subscribe;
+
+    constexpr
+        command<
+            commands::CMD_MQTT_SETUP,
+            void ( callback, callback, callback, callback)>
+        setup;
+
+    constexpr
+        command<
+            commands::CMD_MQTT_PUBLISH,
+            void ( string, string_with_extra_len, uint8_t, uint8_t)>
+        publish;
+    }
 }
 }
 
