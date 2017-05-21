@@ -23,7 +23,6 @@ IMPLEMENT_UART_INTERRUPT( uart);
 
 esp_link::client esp( uart);
 
-
 char *digits( uint8_t value)
 {
     static char buffer[3] = {};
@@ -54,6 +53,7 @@ void log_time( const esp_link::packet *p)
         esp.send( "\n");
     }
 }
+
 void clear_uart()
 {
     while (uart.data_available()) uart.get();
@@ -61,6 +61,9 @@ void clear_uart()
 
 int main(void)
 {
+    using esp_link::mqtt::setup;
+    using esp_link::mqtt::publish;
+
     make_output( led);
     set( led);
 
@@ -68,19 +71,15 @@ int main(void)
     _delay_ms( 5000); // wait for an eternity.
     clear_uart();    // then clear everything received on uart.
 
-    uart.send("sending sync2\n");
     while (not esp.sync()) toggle( led);
-    uart.send( "ready syncing\n");
 
     toggle(led);
-    esp.execute( esp_link::mqtt::setup, 1, 2, 3, 4);
+    esp.execute( setup, 1, 2, 3, 4);
     _delay_ms( 5000);
-
 
     for(;;)
     {
-        esp.execute( esp_link::mqtt::publish, "/spider/LED", "ABCDE", 0, 0);
-        esp.log_packet( esp.receive());
+        esp.execute( publish, "/spider/LED", "ABCDE", 0, 0);
         toggle(led);
         _delay_ms( 1000);
     }

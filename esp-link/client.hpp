@@ -33,6 +33,16 @@ namespace esp_link
         {
         }
 
+        /**
+         * Execute a command.
+         *
+         * The first argument must be an instantiation of the command<> template. This instantiation should have
+         * a command code as its first argument (Cmd) and then a function prototype as its second argument. The parameters
+         * of this function prototype (Parameters...) determine what other arguments are expected of the caller of execute():
+         * each type in Parameters... is matched with a function argument in args... Then, the type of Parameters determines how
+         * the argument will be translated into data in the packet that will be sent to the esp-link serial port.
+         *
+         */
         template< uint16_t Cmd, typename ReturnType, typename... Parameters, typename... Arguments>
         void execute( command<Cmd, ReturnType( Parameters...)> /*ignore*/, const Arguments &... args)
         {
@@ -59,6 +69,11 @@ namespace esp_link
         template <typename T>
         struct tag {};
 
+        // constexpr functions to determine how many parameters to send to the
+        // esp-link, given the list of function parameters.
+        // This is not simply the count of the function parameters, because parameters
+        // of type 'string_with_extra_len' are represented as a single argument, but will
+        // result in two parameters being sent to the esp-link.
         template< typename T>
         static constexpr uint16_t send_parameter_count( tag<T>)
         {
@@ -81,6 +96,7 @@ namespace esp_link
             return 0;
         }
 
+        // metafunction to exclude arguments from parameter type deduction
         template<typename T>
         struct no_type_deduction
         {
@@ -90,35 +106,12 @@ namespace esp_link
         template<typename T>
         using no_type_deduction_t = typename no_type_deduction<T>::type;
 
+
+        // sending parameters...
         void add_parameter_bytes(const uint8_t* data, uint16_t length);
-
-        // send a callback, represented by a uin32_t
-        void add_parameter( tag<callback>, uint32_t value)
-        {
-            add_parameter( value);
-        }
-
-        // send a string represented by a const char * pointer
-        void add_parameter( tag<string>, const char *string)
-        {
-            add_parameter_bytes(
-                    reinterpret_cast<const uint8_t *>( string),
-                    strlen( string));
-        }
-
-        // for some reason some strings are sent with length preceding and
-        // then followed by an extra length indicator...
-        // this happens for instance with the second argument to the mqtt
-        // publish command.
-        void add_parameter( tag<string_with_extra_len>, const char *string)
-        {
-            uint16_t len = strlen( string);
-            add_parameter_bytes(
-                    reinterpret_cast<const uint8_t *>( string),
-                    len);
-            add_parameter( len);
-        }
-
+        void add_parameter(tag<callback>,   uint32_t value);
+        void add_parameter(tag<string>,     const char* string);
+        void add_parameter(tag<string_with_extra_len>, const char* string);
         // send a parameter of any type, represented by a value of that type.
         template< typename T>
         void add_parameter( tag<T>,  no_type_deduction_t<T> value)
@@ -134,28 +127,33 @@ namespace esp_link
                     sizeof( value));
         }
 
+        void send_direct(uint8_t value);
+        void send_byte(uint8_t value);
+        void send_bytes(const uint8_t* buffer, uint8_t size);
+        /// sent a value as a sequence of bytes to the esp. This will send
+        /// the memory bytes of this value
         template< typename T>
         void send_binary( const T &value)
         {
             send_bytes( reinterpret_cast< const uint8_t *>( &value), sizeof value);
         }
-
         void send_hex( uint8_t value);
+
         void send_request_header(uint16_t command, uint32_t value, uint16_t argcount);
         void finalize_request();
-        const packet* decode_packet(const uint8_t* buffer, uint8_t size);
-        const packet* check_packet(const uint8_t* buffer, uint8_t size);
-        void send_bytes(const uint8_t* buffer, uint8_t size);
+
         void clear_input();
+
         bool receive_byte(uint8_t& value, uint32_t timeout = 100000L);
         uint8_t receive_byte_w();
-        void send_direct(uint8_t value);
-        void send_byte(uint8_t value);
+
         static void crc16_add(uint8_t value, uint16_t &accumulator);
+
+        const packet* decode_packet(const uint8_t* buffer, uint8_t size);
+        const packet* check_packet(const uint8_t* buffer, uint8_t size);
 
         uint16_t        m_runningCrc = 0;
         serial::uart<>  *m_uart;
-
         static constexpr uint8_t buffer_size = 128;
         uint8_t m_buffer[buffer_size];
         uint8_t m_buffer_index = 0;

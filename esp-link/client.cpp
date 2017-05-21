@@ -20,6 +20,15 @@ namespace
 namespace esp_link
 {
 
+/**
+ * Wait a limited time for a packet to arrive and return
+ * either nullptr if no packet arrived or a pointer to a
+ * successfully received packet
+ *
+ * timeout is specified in an undefined unit (loop count)
+ * that will normally be in the 100Khz range.
+ *
+ */
 const esp_link::packet* client::receive(uint32_t timeout)
 {
     while (timeout--)
@@ -31,6 +40,11 @@ const esp_link::packet* client::receive(uint32_t timeout)
     return nullptr;
 }
 
+/**
+ * Listen for incoming packets and return immediately if no
+ * packet is arriving.
+ *
+ */
 const packet* client::try_receive()
 {
     while (m_uart->data_available())
@@ -71,12 +85,21 @@ const packet* client::try_receive()
     return nullptr;
 }
 
+/**
+ * Send a null-terminated character string.
+ */
 void client::send(const char* str)
 {
     while (*str)
         send_byte( static_cast<uint8_t>( *str++));
 }
 
+/**
+ * Synchronize with the esp-link.
+ *
+ * Returns false if no response to the sync packet
+ * was recieved within a sane timeout.
+ */
 bool client::sync()
 {
     const packet* p = nullptr;
@@ -104,6 +127,9 @@ bool client::sync()
     return false;
 }
 
+/**
+ * Decode a packet from a sequence of bytes received.
+ */
 const esp_link::packet* client::decode_packet(
         const uint8_t*  buffer,
         uint8_t         size)
@@ -120,6 +146,9 @@ const esp_link::packet* client::decode_packet(
     }
 }
 
+/**
+ * Send a textual representation of a received packet to the serial port.
+ */
 void client::log_packet(const esp_link::packet *p)
 {
     char buffer[10];
@@ -137,6 +166,9 @@ void client::log_packet(const esp_link::packet *p)
     }
 }
 
+/**
+ * Check a sequence of bytes for a correct checksum.
+ */
 const esp_link::packet* client::check_packet(
         const uint8_t*  buffer,
         uint8_t         size)
@@ -163,6 +195,10 @@ const esp_link::packet* client::check_packet(
     }
 }
 
+/**
+ * Send a sequence of bytes indicated by a pointer to the start of
+ * the sequence and the sequence size.
+ */
 void client::send_bytes(const uint8_t* buffer, uint8_t size)
 {
     while (size)
@@ -174,12 +210,18 @@ void client::send_bytes(const uint8_t* buffer, uint8_t size)
     }
 }
 
+/**
+ * Clear the input buffer of the uart.
+ */
 void client::clear_input()
 {
     while (m_uart->data_available())
         m_uart->get();
 }
 
+/**
+ * Wait a limited time for an incoming byte on the serial port.
+ */
 bool client::receive_byte(uint8_t& value, uint32_t timeout) ///< timeout in units of approx. 1.25 us
 {
     while (--timeout && !m_uart->data_available()) /* spinlock */;
@@ -200,6 +242,10 @@ bool client::receive_byte(uint8_t& value, uint32_t timeout) ///< timeout in unit
     return true;
 }
 
+/**
+ * Wait, potentially forever, until a byte arrives at the serial port
+ * and return that bytes value.
+ */
 uint8_t client::receive_byte_w()
 {
     uint8_t result = 0;
@@ -210,6 +256,10 @@ uint8_t client::receive_byte_w()
     return result;
 }
 
+/**
+ * Send a byte value as a hex string.
+ * Useful for debugging.
+ */
 void client::send_hex( uint8_t value)
 {
     constexpr char digits[] = {
@@ -223,12 +273,20 @@ void client::send_hex( uint8_t value)
     m_uart->send( (uint8_t)' ');
 }
 
+/**
+ * Send a byte directly to the uart, without SLIP
+ * ESCAPEing.
+ */
 void client::send_direct(uint8_t value)
 {
     //send_hex( value);
     m_uart->send( value);
 }
 
+/**
+ * Send a byte to the uart, but perform proper
+ * escaping of SLIP_END characters in the data.
+ */
 void client::send_byte(uint8_t value)
 {
     switch (value)
@@ -246,15 +304,24 @@ void client::send_byte(uint8_t value)
     }
 }
 
+/**
+ * Calculate the next crc16 value given an accumulator and a new value.
+ */
 void client::crc16_add(uint8_t value, uint16_t &accumulator)
 {
     accumulator ^= value;
-    accumulator = (accumulator >> 8) | (accumulator << 8);
+    accumulator  = (accumulator >> 8) | (accumulator << 8);
     accumulator ^= (accumulator & 0xff00) << 4;
     accumulator ^= (accumulator >> 8) >> 4;
     accumulator ^= (accumulator & 0xff00) >> 5;
 }
 
+/**
+ * Send the header for a request (command) to the esp-link.
+ *
+ * A request consists of a request header, parameters and a two
+ * byte crc code. This function sends the header.
+ */
 void client::send_request_header(uint16_t command, uint32_t value,
         uint16_t argcount)
 {
@@ -266,6 +333,12 @@ void client::send_request_header(uint16_t command, uint32_t value,
     send_binary( value);
 }
 
+/**
+ * Send the last bytes of a request.
+ *
+ * This means sending the crc and a SLIP_END
+ * character.
+ */
 void client::finalize_request()
 {
     // make a copy of the running crc because
@@ -275,7 +348,13 @@ void client::finalize_request()
     send_direct( SLIP_END);
 }
 
-
+/**
+ * Send a parameter to the esp-link.
+ * A parameter is always sent as a 2-byte size value, followed by the bytes
+ * of the actual parameter.
+ *
+ * The size is, as all binary numbers, transmitted as little endian.
+ */
 void client::add_parameter_bytes(const uint8_t* data, uint16_t length)
 {
     send_binary( length);
@@ -286,6 +365,43 @@ void client::add_parameter_bytes(const uint8_t* data, uint16_t length)
         crc16_add( 0, m_runningCrc);
         send_direct( 0);
     }
+}
+
+/**
+ * Send a callback parameter to the esp-link.
+ * Callbacks are represented by 32-bit integers.
+ */
+void client::add_parameter(tag<callback>, uint32_t value)
+{
+    add_parameter( value);
+}
+
+/**
+ * Send a string parameter to the esp-link.
+ * This overload accepts a const char * for the string.
+ */
+void client::add_parameter(tag<string>, const char* string)
+{
+    add_parameter_bytes( reinterpret_cast<const uint8_t*>( string),
+            strlen( string));
+}
+
+/**
+ * This implements a special case where some strings are sent normally
+ * (i.e. a 16-bit size followed by the bytes of the string), but with an added
+ * parameter that again holds the size of the string.
+ *
+ * This is notably the case for MQTT::publish commands, where the second string
+ * must be sent as follows:
+ * (normal string)
+ * <size> <char> <char> <char>... (<size> chars, padded to a multiple of 4)
+ * 02 00 <size> (the size again, as a 2-byte parameter)
+ */
+void client::add_parameter(tag<string_with_extra_len>, const char* string)
+{
+    uint16_t len = strlen( string);
+    add_parameter_bytes( reinterpret_cast<const uint8_t*>( string), len);
+    add_parameter( len);
 }
 
 }
