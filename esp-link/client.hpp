@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <avr_utilities/devices/uart.h>
 #include <string.h>
+#include "function/function.hpp"
 
 namespace esp_link
 {
@@ -28,6 +29,7 @@ namespace esp_link
     {
     public:
 
+        using callback_type = function::function<void (const packet *)>;
         client( serial::uart<> &uart)
         : m_uart{&uart}
         {
@@ -109,7 +111,7 @@ namespace esp_link
 
         // sending parameters...
         void add_parameter_bytes(const uint8_t* data, uint16_t length);
-        void add_parameter(tag<callback>,   uint32_t value);
+        void add_parameter(tag<callback>, callback_type f);
         void add_parameter(tag<string>,     const char* string);
         void add_parameter(tag<string_with_extra_len>, const char* string);
         // send a parameter of any type, represented by a value of that type.
@@ -119,6 +121,7 @@ namespace esp_link
             add_parameter( value);
         }
 
+
         template< typename T>
         void add_parameter( T value)
         {
@@ -126,6 +129,9 @@ namespace esp_link
                     reinterpret_cast<const uint8_t *>( &value),
                     sizeof( value));
         }
+
+
+        uint32_t register_callback(callback_type f);
 
         void send_direct(uint8_t value);
         void send_byte(uint8_t value);
@@ -159,6 +165,9 @@ namespace esp_link
         uint8_t m_buffer_index = 0;
         bool    m_last_was_esc = false;
         bool    m_syncing = false;
+
+        static constexpr uint8_t callbacks_size = 8;
+        callback_type m_callbacks[callbacks_size];
     };
 
 }

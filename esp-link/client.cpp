@@ -135,15 +135,23 @@ const esp_link::packet* client::decode_packet(
         uint8_t         size)
 {
     auto p = check_packet( buffer, size);
-    if ( p && p->cmd == commands::CMD_SYNC)
+    if (p)
     {
-        sync();
-        return nullptr;
+        if ( p->cmd == commands::CMD_SYNC)
+        {
+            sync();
+            return nullptr;
+        }
+        else if( p->cmd == commands::CMD_RESP_CB)
+        {
+            if (p->value < callbacks_size && m_callbacks[p->value])
+            {
+                m_callbacks[p->value]( p);
+            }
+            return nullptr;
+        }
     }
-    else
-    {
-        return p;
-    }
+    return p;
 }
 
 /**
@@ -371,9 +379,9 @@ void client::add_parameter_bytes(const uint8_t* data, uint16_t length)
  * Send a callback parameter to the esp-link.
  * Callbacks are represented by 32-bit integers.
  */
-void client::add_parameter(tag<callback>, uint32_t value)
+void client::add_parameter(tag<callback>, client::callback_type func)
 {
-    add_parameter( value);
+    add_parameter( register_callback( func));
 }
 
 /**
@@ -402,6 +410,22 @@ void client::add_parameter(tag<string_with_extra_len>, const char* string)
     uint16_t len = strlen( string);
     add_parameter_bytes( reinterpret_cast<const uint8_t*>( string), len);
     add_parameter( len);
+}
+
+uint32_t client::register_callback(callback_type f)
+{
+    if (!f) return callbacks_size;
+
+    for (uint8_t count = 0; count < callbacks_size; ++count)
+    {
+        if (!m_callbacks[count])
+        {
+            m_callbacks[count] = f;
+            return count;
+        }
+    }
+
+    return callbacks_size;
 }
 
 }

@@ -59,13 +59,17 @@ void clear_uart()
     while (uart.data_available()) uart.get();
 }
 
+void update( const esp_link::packet *p)
+{
+    toggle( led);
+}
+
 int main(void)
 {
     using esp_link::mqtt::setup;
-    using esp_link::mqtt::publish;
+    using esp_link::mqtt::subscribe;
 
     make_output( led);
-    set( led);
 
     // get startup logging of the uart out of the way.
     _delay_ms( 5000); // wait for an eternity.
@@ -73,14 +77,13 @@ int main(void)
 
     while (not esp.sync()) toggle( led);
 
-    toggle(led);
-    esp.execute( setup, 1, 2, 3, 4);
+    esp.execute( setup, nullptr, nullptr, nullptr, &update);
     _delay_ms( 5000);
+
+    esp.execute( subscribe, "/spider/LED", 0);
 
     for(;;)
     {
-        esp.execute( publish, "/spider/LED", "ABCDE", 0, 0);
-        toggle(led);
-        _delay_ms( 1000);
+        esp.try_receive();
     }
 }
