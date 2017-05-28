@@ -8,6 +8,7 @@
 #include "client.hpp"
 #include <stdlib.h>
 #include "command_codes.hpp"
+#include <avr_utilities/flash_string.hpp>
 
 namespace
 {
@@ -47,6 +48,7 @@ const esp_link::packet* client::receive(uint32_t timeout)
  */
 const packet* client::try_receive()
 {
+
     while (m_uart->data_available())
     {
         uint8_t lastByte = m_uart->read();
@@ -129,6 +131,12 @@ bool client::sync()
 
 /**
  * Decode a packet from a sequence of bytes received.
+ *
+ * If the packet contains a SYNC command then this function will
+ * initiate a sync command to be sent. If the packet contains a
+ * RESP_CB, this function will look up the callback value in the callback
+ * table, and if a registered callback was found there, it will invoke that
+ * callback.
  */
 const esp_link::packet* client::decode_packet(
         const uint8_t*  buffer,
@@ -356,6 +364,16 @@ void client::finalize_request()
     send_direct( SLIP_END);
 }
 
+void client::send_padding(uint16_t length)
+{
+    uint8_t pad = (4 - (length & 3)) & 3;
+    while (pad--)
+    {
+        crc16_add( 0, m_runningCrc);
+        send_direct( 0);
+    }
+}
+
 /**
  * Send a parameter to the esp-link.
  * A parameter is always sent as a 2-byte size value, followed by the bytes
@@ -367,17 +385,16 @@ void client::add_parameter_bytes(const uint8_t* data, uint16_t length)
 {
     send_binary( length);
     send_bytes( data, length);
-    uint8_t pad = (4 - (length & 3)) & 3;
-    while (pad--)
-    {
-        crc16_add( 0, m_runningCrc);
-        send_direct( 0);
-    }
+    send_padding( length);
 }
 
 /**
  * Send a callback parameter to the esp-link.
  * Callbacks are represented by 32-bit integers.
+ *
+ * To prevent arbitrary code execution, the callback is registered
+ * in a table and it is actually the table position that is
+ * sent to the esp as a callback value.
  */
 void client::add_parameter(tag<callback>, client::callback_type func)
 {
@@ -392,6 +409,28 @@ void client::add_parameter(tag<string>, const char* string)
 {
     add_parameter_bytes( reinterpret_cast<const uint8_t*>( string),
             strlen( string));
+}
+
+/**
+ * Send a string that resides in flash memory to the esp-link.
+ *
+ * This function is much like the const char* overload, except that this one
+ * expects a zero-terminated string in flash memory
+ */
+void client::add_parameter(tag<string>, const flash_string::helper* string)
+{
+
+    auto buffer_ptr = reinterpret_cast< const char *>( string);
+    const uint16_t length = strlen_P( buffer_ptr);
+    send_binary( length);
+
+    while (uint8_t value = pgm_read_byte( buffer_ptr++))
+    {
+        crc16_add( value, m_runningCrc);
+        send_byte( value);
+    }
+
+    send_padding( length);
 }
 
 /**
@@ -412,6 +451,14 @@ void client::add_parameter(tag<string_with_extra_len>, const char* string)
     add_parameter( len);
 }
 
+/**
+ * Register a callback in the local callback table and return
+ * the position in that table where the callback will be stored.
+ *
+ * If the callback is empty or if there is no room left in the
+ * table, this will return a value that is higher than the largest
+ * position in the table.
+ */
 uint32_t client::register_callback(callback_type f)
 {
     if (!f) return callbacks_size;
@@ -427,5 +474,7 @@ uint32_t client::register_callback(callback_type f)
 
     return callbacks_size;
 }
+
+
 
 }

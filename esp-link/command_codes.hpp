@@ -10,7 +10,6 @@
 #include <stdint.h>
 namespace esp_link {
       namespace commands {
-      constexpr uint16_t CMD_NULL           = 0; /**< null; mainly to prevent 0 from doing something bad */
       constexpr uint16_t CMD_SYNC           = 1; /**< Synchronize; starts the protocol */
       constexpr uint16_t CMD_RESP_V         = 2; /**< Response with a value */
       constexpr uint16_t CMD_RESP_CB        = 3; /**< Response with a callback */

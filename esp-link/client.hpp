@@ -11,9 +11,16 @@
 
 #include <stdint.h>
 #include <avr_utilities/devices/uart.h>
+
 #include <string.h>
+
 #include "function/function.hpp"
 
+
+namespace flash_string
+{
+    class helper;
+}
 namespace esp_link
 {
     struct packet
@@ -65,6 +72,7 @@ namespace esp_link
 
         void send(const char* str);
         bool sync();
+            void send_padding(uint16_t length);
 
     private:
 
@@ -100,23 +108,26 @@ namespace esp_link
 
         // metafunction to exclude arguments from parameter type deduction
         template<typename T>
-        struct no_type_deduction
+        struct literally
         {
             using type = T;
         };
 
         template<typename T>
-        using no_type_deduction_t = typename no_type_deduction<T>::type;
+        using literally_t = typename literally<T>::type;
 
 
         // sending parameters...
         void add_parameter_bytes(const uint8_t* data, uint16_t length);
-        void add_parameter(tag<callback>, callback_type f);
+        void add_parameter(tag<callback>,   callback_type f);
         void add_parameter(tag<string>,     const char* string);
+        void add_parameter(tag<string>,     const flash_string::helper* string);
         void add_parameter(tag<string_with_extra_len>, const char* string);
-        // send a parameter of any type, represented by a value of that type.
+
+        // send a parameter of any type T, represented by a value that can be converted
+        // to type T.
         template< typename T>
-        void add_parameter( tag<T>,  no_type_deduction_t<T> value)
+        void add_parameter( tag<T>,  literally_t<T> value)
         {
             add_parameter( value);
         }

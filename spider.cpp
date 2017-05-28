@@ -9,6 +9,7 @@
 #include "esp-link/client.hpp"
 #include "avr_utilities/pin_definitions.hpp"
 #include "avr_utilities/devices/uart.h"
+#include <avr_utilities/flash_string.hpp>
 
 #include <util/delay.h>
 #include <stdlib.h>
@@ -80,7 +81,8 @@ int main(void)
     esp.execute( setup, nullptr, nullptr, nullptr, &update);
     _delay_ms( 5000);
 
-    esp.execute( subscribe, "/spider/LED", 0);
+    //esp.execute( subscribe, "/spider/LED", 0);
+    esp.execute( subscribe, F_("/spider/LED"), 0);
 
     for(;;)
     {
